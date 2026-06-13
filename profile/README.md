@@ -32,11 +32,15 @@ firmware (see [Validation](#validation)).
 | [`crb`](https://github.com/go-tpm2/crb) | v0.1.0 | TPM **CRB** transport — the Command/Response Buffer MMIO interface (PTP §6). Doorbell `Start` + `goIdle`/`cmdReady` state machine over the command/response buffers. |
 | [`efitcg2`](https://github.com/go-tpm2/efitcg2) | v0.1.1 | **`EFI_TCG2_PROTOCOL`** transport — a firmware TPM under UEFI Boot Services. Reaches the protocol through an injected firmware-call closure, so `go-tpm2` stays UEFI-free. `SubmitCommand` + `HashLogExtendEvent` for measured boot. |
 | [`tpm2`](https://github.com/go-tpm2/tpm2) | v0.5.0 | The command API over any `Transport`: Startup, GetRandom, PCR_Read / PCR_Extend, GetCapability (+typed decode), SelfTest; CreatePrimary + an ECC-P256 **Attestation Key**; **remote attestation** (Quote → VerifyQuote); **PolicyPCR sealing**; NV storage; the **Endorsement Key** (EK Credential Profile); and **credential activation** (MakeCredential / ActivateCredential). |
-| [`validate`](https://github.com/go-tpm2/validate) | v0.5.0 | Real-TPM validation harness. Drives a real `swtpm` over the TIS and CRB transports from a TamaGo+QEMU guest, and runs the `EFI_TCG2` measured-boot loop on real x86 **OVMF** firmware. |
+| [`attest`](https://github.com/go-tpm2/attest) | v0.1.0 | Control-plane **remote-attestation protocol** over `tpm2`: a pure-Go **Verifier** + a **Node** agent implementing **node-admission-on-Quote**. A node joins a fleet only if it proves, via a `Quote` over a fresh nonce signed by an **EK-bound AK**, that it booted an approved stack. Two-phase handshake — enrollment (`MakeCredential` / `ActivateCredential` binds the AK to the enrolled EK) then admission (nonce → `Quote` → verify signature, nonce, `pcrDigest`, golden PCR policy). Pluggable `EKRegistry` + `Policy`. |
+| [`validate`](https://github.com/go-tpm2/validate) | v0.6.0 | Real-TPM validation harness. Drives a real `swtpm` over the TIS and CRB transports from a TamaGo+QEMU guest, runs the `EFI_TCG2` measured-boot loop on real x86 **OVMF** firmware, and exercises the `attest` protocol end-to-end via `cmd/attestvalidate` — **9 swtpm harnesses** in all. |
 
 ## How the pieces fit
 
 ```
+     go-tpm2/attest  — control-plane protocol (Verifier + Node)
+   fleet admission : node joins only on a verified Quote (EK-bound AK)
+                            │  consumes tpm2
    Startup · GetRandom · PCR_Read/Extend · GetCapability · SelfTest
    CreatePrimary · AK (ECC-P256) · Quote→Verify · PolicyPCR seal/unseal
    NV · EK (EK Credential Profile) · MakeCredential/ActivateCredential
@@ -103,6 +107,14 @@ plus local sealing — not a toy subset:
 Put together: **EK → AK → ActivateCredential → PCR_Extend → Quote →
 verify**, plus PolicyPCR seal/unseal. The whole loop, in pure Go.
 
+That exact chain — EK → AK → ActivateCredential → Quote → verify — is
+packaged as a ready-to-use protocol in [`attest`](https://github.com/go-tpm2/attest)
+(a **Verifier** + a **Node** agent): a control plane admits a node to a
+fleet *only* on a verified `Quote` over a fresh nonce from an EK-bound
+AK, against a golden PCR policy. The "fleet admission gate" — first
+consumer being [weft](https://github.com/openweft) node admission and
+sealed-secret release.
+
 ## Validation
 
 A TPM stack that only passes its own unit tests has proven only that it
@@ -161,9 +173,11 @@ Real hardware sees what a fake cannot.
 The first consumer is [cloud-boot](https://github.com/cloud-boot)
 measured boot — the TamaGo + UEFI loader measures each loaded image into
 a PCR via `efitcg2` as it boots. Beyond that:
-[weft](https://github.com/openweft) microVM **attestation**, **measured
-boot** of firmware payloads, and **TamaGo secure boot** — any Go project
-that needs a TPM without dragging in cgo or a kernel.
+[weft](https://github.com/openweft) microVM **attestation** — its control
+plane uses `attest` for **node admission** and **sealed-secret release**,
+admitting a node only on a verified `Quote` — plus **measured boot** of
+firmware payloads and **TamaGo secure boot** — any Go project that needs
+a TPM without dragging in cgo or a kernel.
 
 ## Landing page
 
