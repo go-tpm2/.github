@@ -6,12 +6,14 @@
   ],
   "packageRules": [
     {
-      "description": "Auto-merge non-breaking updates, whatever manager they come from. A minor or patch bump whose tests pass is the case this exists for; leaving it open is how a repository ends up eight releases behind. Restricting this to gomod left every npm, pip and container bump sitting green and unmerged.",
+      "description": "One pull request per repository for everything non-breaking, rather than one per dependency. Merging them singly means every merge rebases the others and restarts their checks: one run over an organisation of 34 repositories updated 109 branches and merged 2. Grouped, a repository needs one round of checks instead of dozens.",
       "matchUpdateTypes": [
         "minor",
         "patch",
         "digest"
       ],
+      "groupName": "dependencies",
+      "groupSlug": "deps",
       "automerge": true
     },
     {
@@ -24,13 +26,6 @@
         "go"
       ],
       "automerge": false
-    },
-    {
-      "description": "Group GitHub Actions updates",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "groupName": "github-actions"
     }
   ]
 }
