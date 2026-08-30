@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits"
+  ],
+  "packageRules": [
+    {
+      "description": "Auto-merge non-breaking Go updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Never auto-merge the Go toolchain. A library that breaks is one library; a toolchain that breaks is every architecture at once, and the failure is not in the change but somewhere else, later, in code nobody touched. One is broken today: go1.27.0 miscompiles on loong64 (golang/go#81000, bisected on real hardware to 3fdac6780b), and go-gfx/gfx fails its loong64 lane on exactly that bump while its other ten pass. A repository without a loong64 lane sees nothing. The bump is still proposed, and a person still looks at it.",
+      "matchManagers": [
+        "gomod",
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github-actions",
+      "automerge": true
+    }
+  ]
+}
