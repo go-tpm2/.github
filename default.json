@@ -17,7 +17,7 @@
       "automerge": true
     },
     {
-      "description": "Never auto-merge the Go toolchain. A library that breaks is one library; a toolchain that breaks is every architecture at once, and the failure is not in the change but somewhere else, later, in code nobody touched. One is broken today: go1.27.0 miscompiles on loong64 (golang/go#81000, bisected on real hardware to 3fdac6780b), and go-gfx/gfx fails its loong64 lane on exactly that bump while its other ten pass. A repository without a loong64 lane sees nothing. The bump is still proposed, and a person still looks at it.",
+      "description": "Never auto-merge the Go toolchain, and never let it ride in somebody else's group. A rule that says automerge:false for one dependency is defeated by grouping, because Renovate decides automerge per BRANCH: go 1.27.0 rode into seven repositories inside a branch called renovate/github-actions, whose other dependency was actions/setup-go. Ungrouped, it gets a branch of its own and this setting governs it. It matters because go1.27.0 miscompiles on loong64 (golang/go#81000, bisected on real hardware to 3fdac6780b): go-gfx/gfx fails that lane and stayed open only because the lane failed, which is the CI gate holding rather than this rule. A repository without such a lane sees nothing.",
       "matchManagers": [
         "gomod",
         "github-actions"
@@ -25,7 +25,8 @@
       "matchDepNames": [
         "go"
       ],
-      "automerge": false
+      "automerge": false,
+      "groupName": null
     }
   ]
 }
