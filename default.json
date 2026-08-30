@@ -6,13 +6,11 @@
   ],
   "packageRules": [
     {
-      "description": "Auto-merge non-breaking Go updates",
-      "matchManagers": [
-        "gomod"
-      ],
+      "description": "Auto-merge non-breaking updates, whatever manager they come from. A minor or patch bump whose tests pass is the case this exists for; leaving it open is how a repository ends up eight releases behind. Restricting this to gomod left every npm, pip and container bump sitting green and unmerged.",
       "matchUpdateTypes": [
         "minor",
-        "patch"
+        "patch",
+        "digest"
       ],
       "automerge": true
     },
@@ -32,8 +30,7 @@
       "matchManagers": [
         "github-actions"
       ],
-      "groupName": "github-actions",
-      "automerge": true
+      "groupName": "github-actions"
     }
   ]
 }
