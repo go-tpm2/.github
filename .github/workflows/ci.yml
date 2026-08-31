@@ -1,0 +1,212 @@
+# What runs Renovate for this organisation is renovate.yml, and until now
+# nothing was ever run against a change to it. Its only triggers are `schedule`
+# and `workflow_dispatch`, so a Renovate pull request bumping
+# renovatebot/github-action -- the action that runs Renovate -- arrived with
+# zero checks. Across the fleet, 77 of the 116 repositories holding a runner
+# are in that state.
+#
+# That is worse than an untested library, because the failure is silent: a
+# runner that stops produces no pull requests, and a fleet with no updates due
+# looks exactly the same. Nothing anywhere watches for it.
+#
+# So: this runs on pull_request, and every step below states what it proves.
+# A step that cannot fail is not a check, it is an alibi -- which is why the
+# validator is made to reject a known-bad config on every run (step 4).
+
+name: ci
+
+# No `branches:` filter on pull_request, deliberately. A filtered trigger
+# reports "no checks" forever for any pull request not aimed at main, which is
+# the same blind spot one level down.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # 1. PROVES: every workflow file is a parseable GitHub Actions workflow
+      #    with well-formed expressions and no unknown keys.
+      #    DOES NOT PROVE: that any action it references exists or works.
+      - name: Workflows parse
+        run: |
+          curl -sSfL -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          tar xzf actionlint.tar.gz actionlint
+          ./actionlint .github/workflows/*.yml
+
+      # 2. PROVES: every `uses: owner/repo@ref` in every workflow resolves to a
+      #    ref that exists in that repository today. This is the step with
+      #    teeth on the pull requests that actually arrive here, which bump
+      #    renovatebot/github-action and nothing else.
+      #    DOES NOT PROVE: that the new version behaves. See the note at the
+      #    foot of this file about what the action actually pins.
+      #    Uses `git ls-remote`, so it needs no token and has no API budget.
+      - name: Every pinned action ref exists
+        run: |
+          set -euo pipefail
+          rc=0
+          # No pipe into `while`: that is a subshell, rc=1 set inside it is
+          # discarded, and the step passes whatever it found. A check that
+          # cannot fail is the thing this whole file exists to stop.
+          # Anchored to the start of a line, after optional indent and an
+          # optional list dash. Unanchored, this matched the example `uses:`
+          # written inside a comment in this very file and reported it missing.
+          refs=$(grep -hoE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[A-Za-z0-9._/-]+' \
+                   .github/workflows/*.yml \
+                 | sed -E 's/^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*//' | sort -u)
+          [ -n "$refs" ] || { echo "no pinned action refs found -- grep is wrong"; exit 1; }
+          while read -r ref; do
+              repo="${ref%@*}"; rev="${ref##*@}"
+              if git ls-remote --refs "https://github.com/$repo" \
+                   "refs/tags/$rev" "refs/heads/$rev" | grep -q .; then
+                echo "ok       $ref"
+              elif [ "${#rev}" -eq 40 ] && \
+                   git ls-remote "https://github.com/$repo" | grep -q "^$rev"; then
+                echo "ok(sha)  $ref"
+              else
+                echo "MISSING  $ref -- no such tag, branch or sha"; rc=1
+              fi
+          done <<< "$refs"
+          exit $rc
+
+      # 3. PROVES: the Renovate configuration this organisation runs on holds no
+      #    unknown option, is well-formed, and -- for config.js -- evaluates
+      #    STANDALONE.
+      #
+      #    Standalone matters and is not pedantry. renovatebot/github-action
+      #    mounts the configuration file BY ITSELF (src/renovate.ts, v46.2.5):
+      #
+      #        --volume ${configurationFile.value}:/github-action/<basename>
+      #
+      #    so a `require('./sibling')` resolves in the checkout, passes a
+      #    validator run there, and still kills every scheduled run with
+      #    "FATAL: Error parsing config file" -- a message naming no path,
+      #    reading like a syntax error in a file that has none.
+      #
+      #    DOES NOT PROVE -- both measured against renovate@latest, not
+      #    inferred from the documentation:
+      #
+      #      - that a TOP-LEVEL `extends:` resolves. Renovate DOES resolve a
+      #        preset nested inside a packageRules[] entry, over the network,
+      #        and a bad one there fails correctly. A top-level one is not
+      #        resolved at all: a config whose top-level extends is
+      #        `github>no-such-org-xyz99/nope` validates and exits 0. Every
+      #        config in this organisation extends at the top level. Step 5
+      #        exists for that case, and only that case.
+      #
+      #      - `matchUpdateTypes`. Most types ARE checked: a string for
+      #        `automerge` (boolean), for `prConcurrentLimit` (integer), or an
+      #        object for `packageRules` (array) each fail correctly. But
+      #        `"matchUpdateTypes": "minor"` where an array is required
+      #        validates and exits 0, with or without --strict and --no-global.
+      #        Nothing here catches that one.
+      - name: Renovate config validates, as the container sees it
+        run: |
+          set -euo pipefail
+          iso="$(mktemp -d)"
+          global=() repo=()
+          # `if` blocks, not `[ -f x ] && ...`: under `set -e` a false test is
+          # a failed statement and aborts the step.
+          if [ -f config.js ]; then cp config.js "$iso/"; global+=(config.js); fi
+          for f in default.json renovate.json; do
+            if [ -f "$f" ]; then cp "$f" "$iso/"; repo+=("$f"); fi
+          done
+          cd "$iso"
+          # config.js is self-hosted (global) config; default.json and
+          # renovate.json are repo config. Passing a filename makes the
+          # validator assume GLOBAL unless --no-global is given -- its own
+          # --help warns about this -- so the two kinds are validated
+          # separately, each in the mode Renovate will actually read it in.
+          if [ ${#global[@]} -gt 0 ]; then
+            npx --yes --package renovate@latest renovate-config-validator --strict "${global[@]}"
+          fi
+          if [ ${#repo[@]} -gt 0 ]; then
+            npx --yes --package renovate@latest renovate-config-validator --strict --no-global "${repo[@]}"
+          fi
+          if [ ${#global[@]} -eq 0 ] && [ ${#repo[@]} -eq 0 ]; then
+            echo "no Renovate config in this repository -- nothing validated"; exit 1
+          fi
+
+      # 4. PROVES: step 3 can still fail. A check whose subject silently stops
+      #    being checked is worse than no check, because it turns an absence
+      #    into assurance. If a future validator, or a future --strict, stops
+      #    rejecting an unknown option, this fails here rather than going quiet.
+      - name: The validator still rejects a bad config
+        run: |
+          set -euo pipefail
+          bad="$(mktemp -d)"
+          printf '{"thisOptionDoesNotExist": true}\n' > "$bad/renovate.json"
+          cd "$bad"
+          if npx --yes --package renovate@latest renovate-config-validator \
+               --strict --no-global renovate.json; then
+            echo "SELF-TEST FAILED: the validator accepted an unknown option."
+            echo "Step 3 above therefore proves nothing. Fix this before trusting it."
+            exit 1
+          fi
+          echo "self-test ok: the validator rejects what it should"
+
+      # 5. PROVES: every remote preset named in a TOP-LEVEL `extends` exists
+      #    and is parseable JSON -- the one case the validator provably skips
+      #    (measured, step 3). Every repository in the fleet carries
+      #    `"extends": ["github>ORG/.github"]` at the top level, so a renamed
+      #    or emptied preset repository silently drops every repository that
+      #    points at it back to Renovate's defaults, with every run still
+      #    green.
+      #    DOES NOT PROVE: that the preset's contents are what anyone intended.
+      #    Presets nested in packageRules are left to the validator, which
+      #    already resolves those and does it better.
+      - name: Every `extends` preset resolves
+        run: |
+          set -euo pipefail
+          rc=0
+          refs=$(grep -hoE '"github>[^"]+"' ./*.json 2>/dev/null | tr -d '"' | sort -u || true)
+          if [ -z "$refs" ]; then echo "no github> presets to resolve"; exit 0; fi
+          while read -r p; do
+            slug="${p#github>}"; slug="${slug%%:*}"
+            found=""
+            for f in default.json renovate.json .renovaterc.json .renovaterc .github/renovate.json; do
+              if curl -sSfL -o /tmp/preset.json \
+                   "https://raw.githubusercontent.com/$slug/HEAD/$f"; then
+                if python3 -c "import json;json.load(open('/tmp/preset.json'))"; then
+                  echo "ok       $p -> $slug/$f"
+                else
+                  echo "BAD JSON $p -> $slug/$f"; rc=1
+                fi
+                found=1; break
+              fi
+            done
+            if [ -z "$found" ]; then echo "MISSING  $p -- no preset file in $slug"; rc=1; fi
+          done <<< "$refs"
+          exit $rc
+
+# One thing none of this can prove, worth writing down where it will be read.
+#
+# `renovatebot/github-action` does not pin the Renovate it runs. src/docker.ts
+# (v46.2.5) hardcodes:
+#
+#     image   = 'ghcr.io/renovatebot/renovate'
+#     version = '44'
+#
+# so the container is ghcr.io/renovatebot/renovate:44 -- a FLOATING major tag.
+# The engine therefore changes under this organisation on days when nothing in
+# this repository changed, and Renovate never opens a pull request for it
+# because there is no pin to bump. v46.2.4 and v46.2.5 both say '44': the
+# action bump these pull requests carry moves the runner's wrapper, not its
+# engine. Pinning that image by digest is a separate decision, not this file's.
