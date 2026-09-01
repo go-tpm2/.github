@@ -162,13 +162,46 @@ jobs:
           fi
           echo "self-test ok: the validator rejects what it should"
 
-      # 5. PROVES: every remote preset named in a TOP-LEVEL `extends` exists
-      #    and is parseable JSON -- the one case the validator provably skips
+      # 5. PROVES: every preset named in a TOP-LEVEL `extends` exists and is
+      #    parseable JSON -- the one case the validator provably skips
       #    (measured, step 3). Every repository in the fleet carries
       #    `"extends": ["github>ORG/.github"]` at the top level, so a renamed
       #    or emptied preset repository silently drops every repository that
       #    points at it back to Renovate's defaults, with every run still
       #    green.
+      #
+      #    A preset naming THE REPOSITORY THIS IS RUNNING IN is resolved from
+      #    the CHECKOUT, and that is not a convenience. This step used to fetch
+      #    every preset from raw.githubusercontent.com/<slug>/HEAD, which is
+      #    the PUBLISHED copy -- so when the pull request under test IS the
+      #    preset repository, it asked about a version of the file that the
+      #    pull request has not created yet. On the first landing in a new
+      #    organisation, `github>ORG/.github` therefore reported MISSING while
+      #    `default.json` sat right there in the tree, added by the very commit
+      #    being checked. go-gitsafe/.github#1 is that failure. The published
+      #    copy is simply the wrong source for a repository the checkout
+      #    already holds authoritatively.
+      #
+      #    Do NOT "simplify" this back to one remote fetch. It is not two code
+      #    paths for the sake of it: for THIS repository the tree is the truth
+      #    and `main` is stale by exactly the change under review, and for every
+      #    OTHER repository the tree knows nothing and the published copy is
+      #    the only truth there is.
+      #
+      #    The failure stays sharp. Absent from the tree AND absent from the
+      #    remote is still MISSING, which is the renamed-preset case this step
+      #    exists to catch. Only "present in one of them" passes.
+      #
+      #    One trap the tree path has and the remote path did not. Every
+      #    `<org>/.github` holds BOTH the preset (`default.json`) and the stub
+      #    that consumes it (`renovate.json`, `{"extends": ["github>ORG/.github"]}`).
+      #    Renovate falls back from the first to the second, so a tree that has
+      #    lost `default.json` would resolve the preset to the stub that names
+      #    it -- a file extending itself -- and this step would call that `ok`
+      #    while Renovate chokes on the recursion. So a candidate whose own
+      #    top-level `extends` names THIS repository is skipped rather than
+      #    accepted: it is the consumer, not the preset.
+      #
       #    DOES NOT PROVE: that the preset's contents are what anyone intended.
       #    Presets nested in packageRules are left to the validator, which
       #    already resolves those and does it better.
@@ -178,21 +211,52 @@ jobs:
           rc=0
           refs=$(grep -hoE '"github>[^"]+"' ./*.json 2>/dev/null | tr -d '"' | sort -u || true)
           if [ -z "$refs" ]; then echo "no github> presets to resolve"; exit 0; fi
+          # Slugs are case-insensitive on GitHub; compare them that way.
+          self=$(printf '%s' "${GITHUB_REPOSITORY:-}" | tr '[:upper:]' '[:lower:]')
+          # The order Renovate itself looks for a preset file in.
+          candidates="default.json renovate.json .renovaterc.json .renovaterc .github/renovate.json"
           while read -r p; do
             slug="${p#github>}"; slug="${slug%%:*}"
             found=""
-            for f in default.json renovate.json .renovaterc.json .renovaterc .github/renovate.json; do
-              if curl -sSfL -o /tmp/preset.json \
-                   "https://raw.githubusercontent.com/$slug/HEAD/$f"; then
-                if python3 -c "import json;json.load(open('/tmp/preset.json'))"; then
-                  echo "ok       $p -> $slug/$f"
-                else
-                  echo "BAD JSON $p -> $slug/$f"; rc=1
+            if [ -n "$self" ] && \
+               [ "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" = "$self" ]; then
+              for f in $candidates; do
+                if [ -f "$f" ]; then
+                  # The stub that consumes the preset is not the preset.
+                  circular="import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(isinstance(x,str) and x.split(':')[0].lower()=='github>'+sys.argv[2] for x in (d.get('extends') or [])) else 1)"
+                  if python3 -c "$circular" "$f" "$self" 2>/dev/null; then
+                    echo "skip     ./$f extends $p itself -- it is the consumer, not the preset"
+                    continue
+                  fi
+                  if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"; then
+                    echo "ok(tree) $p -> ./$f -- this repository, as this pull request leaves it"
+                  else
+                    echo "BAD JSON $p -> ./$f -- this repository, as this pull request leaves it"
+                    rc=1
+                  fi
+                  found=1; break
                 fi
-                found=1; break
-              fi
-            done
-            if [ -z "$found" ]; then echo "MISSING  $p -- no preset file in $slug"; rc=1; fi
+              done
+              [ -n "$found" ] || \
+                echo "note     $p names this repository but the checkout has no preset file; asking the published copy"
+            fi
+            if [ -z "$found" ]; then
+              for f in $candidates; do
+                if curl -sSfL -o /tmp/preset.json \
+                     "https://raw.githubusercontent.com/$slug/HEAD/$f"; then
+                  if python3 -c "import json;json.load(open('/tmp/preset.json'))"; then
+                    echo "ok       $p -> $slug/$f"
+                  else
+                    echo "BAD JSON $p -> $slug/$f"; rc=1
+                  fi
+                  found=1; break
+                fi
+              done
+            fi
+            if [ -z "$found" ]; then
+              echo "MISSING  $p -- not in this checkout and no preset file in $slug"
+              rc=1
+            fi
           done <<< "$refs"
           exit $rc
 
