@@ -21,4 +21,19 @@ module.exports = {
   requireConfig: 'optional',
   dependencyDashboard: true,
   repositoryCache: 'enabled',
+  // default.json beside this file is a PRESET, and a preset reaches a
+  // repository only through an `extends` that names it. Sitting in the
+  // organisation applies it to nothing: with onboarding:false and
+  // requireConfig:'optional', a repository carrying no config file runs on
+  // Renovate's factory defaults and says so only at debug level --
+  // "No renovate config file found". Measured 2026-09-03: 77 of the 835
+  // repositories across the 117 organisations that run Renovate were in that
+  // state, so the Go toolchain guard in default.json had never been in force
+  // on any of them.
+  inheritConfig: true,
+  inheritConfigRepoName: '{{parentOrg}}/.github',
+  inheritConfigFileName: 'default.json',
+  // Loud when absent. Left at its default of false, Renovate proceeds silently
+  // when the file is missing -- the same failure, one level up.
+  inheritConfigStrict: true,
 };

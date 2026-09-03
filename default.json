@@ -4,6 +4,10 @@
     "config:recommended",
     ":semanticCommits"
   ],
+  "postUpdateOptions": [
+    "gomodTidy",
+    "gomodUpdateImportPaths"
+  ],
   "packageRules": [
     {
       "description": "One pull request per repository for everything non-breaking, rather than one per dependency. Merging them singly means every merge rebases the others and restarts their checks: one run over an organisation of 34 repositories updated 109 branches and merged 2. Grouped, a repository needs one round of checks instead of dozens.",
