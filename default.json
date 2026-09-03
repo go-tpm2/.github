@@ -10,7 +10,9 @@
   ],
   "packageRules": [
     {
-      "description": "One pull request per repository for everything non-breaking, rather than one per dependency. Merging them singly means every merge rebases the others and restarts their checks: one run over an organisation of 34 repositories updated 109 branches and merged 2. Grouped, a repository needs one round of checks instead of dozens.",
+      "description": [
+        "One pull request per repository for everything non-breaking, rather than one per dependency. Merging them singly means every merge rebases the others and restarts their checks: one run over an organisation of 34 repositories updated 109 branches and merged 2. Grouped, a repository needs one round of checks instead of dozens."
+      ],
       "matchUpdateTypes": [
         "minor",
         "patch",
@@ -21,7 +23,9 @@
       "automerge": true
     },
     {
-      "description": "Never auto-merge the Go toolchain, and never let it ride in somebody else's group. A rule that says automerge:false for one dependency is defeated by grouping, because Renovate decides automerge per BRANCH: go 1.27.0 rode into seven repositories inside a branch called renovate/github-actions, whose other dependency was actions/setup-go. Ungrouped, it gets a branch of its own and this setting governs it. It matters because go1.27.0 miscompiles on loong64 (golang/go#81000, bisected on real hardware to 3fdac6780b): go-gfx/gfx fails that lane and stayed open only because the lane failed, which is the CI gate holding rather than this rule. A repository without such a lane sees nothing.",
+      "description": [
+        "Never auto-merge the Go toolchain, and never let it ride in somebody else's group. A rule that says automerge:false for one dependency is defeated by grouping, because Renovate decides automerge per BRANCH: go 1.27.0 rode into seven repositories inside a branch called renovate/github-actions, whose other dependency was actions/setup-go. Ungrouped, it gets a branch of its own and this setting governs it. It matters because go1.27.0 miscompiles on loong64 (golang/go#81000, bisected on real hardware to 3fdac6780b): go-gfx/gfx fails that lane and stayed open only because the lane failed, which is the CI gate holding rather than this rule. A repository without such a lane sees nothing."
+      ],
       "matchManagers": [
         "gomod",
         "github-actions"
