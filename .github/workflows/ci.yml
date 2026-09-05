@@ -162,6 +162,80 @@ jobs:
           fi
           echo "self-test ok: the validator rejects what it should"
 
+      # 4b. PROVES: this preset survives the INHERITED path, which is a
+      #     different validator from step 3 and stricter.
+      #
+      #     config.js sets inheritConfig, so Renovate reads default.json
+      #     through validateConfig('inherit', ...) -- and that runs WITHOUT
+      #     the migration applied to a preset. A plain string `description`
+      #     is legal in a preset, migrated to a list, and REJECTED when
+      #     inherited:
+      #
+      #       Configuration option `description` should be a list (Array)
+      #       Configuration option `packageRules[0].description` should be a
+      #       list (Array)
+      #
+      #     Renovate then opens "Action Required: Fix Renovate Configuration"
+      #     on EVERY repository in the organisation and stops producing
+      #     updates there. On 2026-09-03 that landed on all 117 organisations
+      #     at once, and step 3 above passed the whole time, because it
+      #     validates default.json as REPO config -- the shape Renovate no
+      #     longer reads it in.
+      #
+      #     The failure is silent twice over: the Renovate workflow run still
+      #     reports success, since a per-repository config error is an issue
+      #     rather than a failed job.
+      #
+      #     DOES NOT PROVE: that nothing else differs between the two
+      #     validators. This checks the one rule that has actually bitten.
+      #     If another surfaces, add it here rather than to a person's memory.
+      - name: The preset survives the inherited path
+        run: |
+          set -euo pipefail
+          [ -f default.json ] || { echo "no default.json -- nothing to check"; exit 0; }
+          python3 - default.json <<'CHECK'
+          import json, sys
+          bad = []
+          d = json.load(open(sys.argv[1]))
+          if isinstance(d.get("description"), str):
+              bad.append("description")
+          for i, r in enumerate(d.get("packageRules") or []):
+              if isinstance(r.get("description"), str):
+                  bad.append("packageRules[%d].description" % i)
+          if bad:
+              print("REJECTED on the inherited path:")
+              for b in bad:
+                  print("  %s is a string; it must be a list (Array)" % b)
+              print("A string is fine in a preset and fatal when inherited.")
+              sys.exit(1)
+          print("ok: every description is a list")
+          CHECK
+
+      # 4c. PROVES: step 4b can still fail, on a config shaped exactly like
+      #     the one that caused the outage.
+      - name: The inherited-path check still rejects a string description
+        run: |
+          set -euo pipefail
+          bad="$(mktemp -d)"
+          printf '{"packageRules":[{"description":"a string","matchUpdateTypes":["minor"]}]}\n' \
+            > "$bad/default.json"
+          if python3 - "$bad/default.json" <<'CHECK'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          if isinstance(d.get("description"), str):
+              sys.exit(1)
+          for r in d.get("packageRules") or []:
+              if isinstance(r.get("description"), str):
+                  sys.exit(1)
+          sys.exit(0)
+          CHECK
+          then
+            echo "SELF-TEST FAILED: a string description was accepted."
+            echo "Step 4b therefore proves nothing. Fix this before trusting it."
+            exit 1
+          fi
+          echo "self-test ok: a string description is still rejected"
+
       # 5. PROVES: every preset named in a TOP-LEVEL `extends` exists and is
       #    parseable JSON -- the one case the validator provably skips
       #    (measured, step 3). Every repository in the fleet carries
