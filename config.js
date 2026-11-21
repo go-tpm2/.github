@@ -19,7 +19,7 @@ module.exports = {
   autodiscoverFilter: ['go-tpm2/**'],
   onboarding: false,
   requireConfig: 'optional',
-  dependencyDashboard: true,
+  dependencyDashboard: { enabled: true },
   repositoryCache: 'enabled',
   // default.json beside this file is a PRESET, and a preset reaches a
   // repository only through an `extends` that names it. Sitting in the
