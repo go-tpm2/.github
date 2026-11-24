@@ -135,10 +135,10 @@ jobs:
           # --help warns about this -- so the two kinds are validated
           # separately, each in the mode Renovate will actually read it in.
           if [ ${#global[@]} -gt 0 ]; then
-            npx --yes --package renovate@latest renovate-config-validator --strict "${global[@]}"
+            npx --yes --package renovate@44 renovate-config-validator --strict "${global[@]}"
           fi
           if [ ${#repo[@]} -gt 0 ]; then
-            npx --yes --package renovate@latest renovate-config-validator --strict --no-global "${repo[@]}"
+            npx --yes --package renovate@44 renovate-config-validator --strict --no-global "${repo[@]}"
           fi
           if [ ${#global[@]} -eq 0 ] && [ ${#repo[@]} -eq 0 ]; then
             echo "no Renovate config in this repository -- nothing validated"; exit 1
@@ -154,7 +154,7 @@ jobs:
           bad="$(mktemp -d)"
           printf '{"thisOptionDoesNotExist": true}\n' > "$bad/renovate.json"
           cd "$bad"
-          if npx --yes --package renovate@latest renovate-config-validator \
+          if npx --yes --package renovate@44 renovate-config-validator \
                --strict --no-global renovate.json; then
             echo "SELF-TEST FAILED: the validator accepted an unknown option."
             echo "Step 3 above therefore proves nothing. Fix this before trusting it."
